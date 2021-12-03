@@ -19,6 +19,7 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
     let mut stdout = stdout();
     for y in 0..h
     {
+        queue!(stdout, MoveTo(0, y as u16))?;
         for x in 0..w
         {
             if (grid[x][y] & UNKNOWN) != 0
@@ -50,7 +51,6 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
             }
             print!(" ");
         }
-        print!("\n");
     }
     Ok(())
 }
@@ -159,7 +159,6 @@ fn run_game() -> Result<()>
     loop
 	{
         let mut stdout = stdout();
-        queue!(stdout, MoveTo(0, 0))?;
         print_grid(&grid)?;
         execute!(stdout, MoveTo(px as u16 * 2, py as u16), SetForegroundColor(Color::DarkGrey))?;
         println!("X");
