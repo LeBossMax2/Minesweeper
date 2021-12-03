@@ -3,7 +3,7 @@ use rand::Rng;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::{read, Event, KeyCode};
 use crossterm::cursor::MoveTo;
-use crossterm::style::{SetForegroundColor, Color, SetAttribute, Attribute};
+use crossterm::style::{SetForegroundColor, Color};
 use crossterm::{Result, execute, queue};
 
 const MINE: u32 = 16;
@@ -188,14 +188,14 @@ fn run_game() -> Result<()>
                         }
                     },
                     KeyCode::Left => px = px.checked_sub(1).unwrap_or(0),
-                    KeyCode::Char(' ') =>
+                    KeyCode::Char(' ' | 's') =>
                     {
                         if !reveal(&mut grid, px, py)?
                         {
                             return Ok(());
                         }
                     },
-                    KeyCode::Char('!') =>
+                    KeyCode::Char('!' | 'z') =>
                     {
                         if (grid[px][py] & UNKNOWN) != 0
                         {
