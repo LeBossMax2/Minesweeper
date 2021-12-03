@@ -1,9 +1,9 @@
-use std::io::stdout;
+use std::io::{stdout, Write};
 use rand::Rng;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::{read, Event, KeyCode};
-use crossterm::cursor::{Hide, Show, MoveTo};
-use crossterm::style::{SetForegroundColor, Color};
+use crossterm::cursor::MoveTo;
+use crossterm::style::{SetForegroundColor, Color, SetAttribute, Attribute};
 use crossterm::{Result, execute, queue};
 
 const MINE: u32 = 16;
@@ -26,18 +26,18 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
             {
                 if (grid[x][y] & MARK) != 0
                 {
-                    execute!(stdout, SetForegroundColor(Color::Red))?;
+                    queue!(stdout, SetForegroundColor(Color::Red))?;
                     print!("P");
                 }
                 else
                 {
-                    execute!(stdout, SetForegroundColor(Color::Reset))?;
+                    queue!(stdout, SetForegroundColor(Color::Reset))?;
                     print!("■");
                 }
             }
             else if (grid[x][y] & MINE) != 0
             {
-                execute!(stdout, SetForegroundColor(Color::Red))?;
+                queue!(stdout, SetForegroundColor(Color::Red))?;
                 print!("*");
             }
             else if (grid[x][y] & NUMBER_MASK) == 0
@@ -46,12 +46,13 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
             }
             else
             {
-                execute!(stdout, SetForegroundColor(Color::Cyan))?;
+                queue!(stdout, SetForegroundColor(Color::Cyan))?;
                 print!("{}", grid[x][y] & NUMBER_MASK);
             }
             print!(" ");
         }
     }
+    stdout.flush()?;
     Ok(())
 }
 
@@ -59,11 +60,11 @@ fn main() -> Result<()>
 {
     let mut stdout = stdout();
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    execute!(stdout, EnterAlternateScreen)?;
 
     let res = run_game();
 
-    execute!(stdout, Show, LeaveAlternateScreen)?;
+    execute!(stdout, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
     res
@@ -160,9 +161,8 @@ fn run_game() -> Result<()>
 	{
         let mut stdout = stdout();
         print_grid(&grid)?;
-        execute!(stdout, MoveTo(px as u16 * 2, py as u16), SetForegroundColor(Color::DarkGrey))?;
-        println!("X");
-
+        execute!(stdout, MoveTo(px as u16 * 2, py as u16))?;
+        
         match read()?
         {
             Event::Key(ke) =>
