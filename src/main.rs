@@ -2,8 +2,8 @@ use std::io::{stdout, Write};
 use rand::Rng;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::{read, Event, KeyCode, EnableMouseCapture, DisableMouseCapture, MouseEventKind, MouseButton};
-use crossterm::cursor::MoveTo;
-use crossterm::style::{SetForegroundColor, Color};
+use crossterm::cursor::{MoveTo, Show, Hide};
+use crossterm::style::{SetForegroundColor, Color, SetBackgroundColor};
 use crossterm::{Result, execute, queue};
 
 const MINE: u32 = 16;
@@ -14,7 +14,7 @@ const NUMBER_MASK: u32 = MINE-1;
 const w: usize = 30;
 const h: usize = 16;
 
-fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
+fn print_grid(grid: &[[u32; h]; w], px: usize, py: usize) -> Result<()>
 {
     let mut stdout = stdout();
     for y in 0..h
@@ -22,6 +22,11 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
         queue!(stdout, MoveTo(0, y as u16))?;
         for x in 0..w
         {
+            if x == px && y == py
+            {
+                queue!(stdout, SetBackgroundColor(Color::DarkGrey))?;
+            }
+
             if (grid[x][y] & UNKNOWN) != 0
             {
                 if (grid[x][y] & MARK) != 0
@@ -49,6 +54,7 @@ fn print_grid(grid: &[[u32; h]; w]) -> Result<()>
                 queue!(stdout, SetForegroundColor(Color::Cyan))?;
                 print!("{}", grid[x][y] & NUMBER_MASK);
             }
+            queue!(stdout, SetBackgroundColor(Color::Reset))?;
             print!(" ");
         }
     }
@@ -60,11 +66,11 @@ fn main() -> Result<()>
 {
     let mut stdout = stdout();
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
 
     let res = run_game();
 
-    execute!(stdout, DisableMouseCapture, LeaveAlternateScreen)?;
+    execute!(stdout, Show, DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
     res
@@ -164,9 +170,7 @@ fn run_game() -> Result<()>
 
     loop
 	{
-        let mut stdout = stdout();
-        print_grid(&grid)?;
-        execute!(stdout, MoveTo(px as u16 * 2, py as u16))?;
+        print_grid(&grid, px, py)?;
         
         match read()?
         {
