@@ -58,7 +58,6 @@ fn print_grid(grid: &[[u32; h]; w], px: usize, py: usize) -> Result<()>
             print!(" ");
         }
     }
-    stdout.flush()?;
     Ok(())
 }
 
@@ -74,6 +73,23 @@ fn main() -> Result<()>
     disable_raw_mode()?;
 
     res
+}
+
+fn mark_cell(grid: &mut [[u32; h]; w], px: usize, py: usize) -> i32
+{
+    if (grid[px][py] & UNKNOWN) != 0
+    {
+        grid[px][py] ^= MARK;
+        if (grid[px][py] & MARK) != 0
+        {
+            return 1;
+        }
+        else
+        {
+            return -1;
+        }
+    }
+    return 0;
 }
 
 fn reveal(grid: &mut [[u32; h]; w], px: usize, py: usize) -> Result<bool>
@@ -167,10 +183,15 @@ fn run_game() -> Result<()>
     
     let mut px = w / 2;
     let mut py = h / 2;
+    let mut flag_count = 0;
 
     loop
 	{
+        let mut stdout = stdout();
         print_grid(&grid, px, py)?;
+        queue!(stdout, MoveTo(0, h as u16))?;
+        print!("{}   ", m as i32 - flag_count);
+        stdout.flush()?;
         
         match read()?
         {
@@ -206,10 +227,7 @@ fn run_game() -> Result<()>
                     },
                     KeyCode::Char('!' | 'z') =>
                     {
-                        if (grid[px][py] & UNKNOWN) != 0
-                        {
-                            grid[px][py] ^= MARK;
-                        }
+                        flag_count += mark_cell(&mut grid, px, py);
                     }
                     _ => { }
                 }
@@ -235,10 +253,7 @@ fn run_game() -> Result<()>
                     },
                     MouseEventKind::Down(MouseButton::Right) =>
                     {
-                        if (grid[px][py] & UNKNOWN) != 0
-                        {
-                            grid[px][py] ^= MARK;
-                        }
+                        flag_count += mark_cell(&mut grid, px, py);
                     },
                     _ => { }
                 }
