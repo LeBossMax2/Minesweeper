@@ -1,7 +1,7 @@
 use std::io::{stdout, Write};
 use rand::Rng;
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::event::{read, Event, KeyCode};
+use crossterm::event::{read, Event, KeyCode, EnableMouseCapture, DisableMouseCapture, MouseEventKind, MouseButton};
 use crossterm::cursor::MoveTo;
 use crossterm::style::{SetForegroundColor, Color};
 use crossterm::{Result, execute, queue};
@@ -60,11 +60,11 @@ fn main() -> Result<()>
 {
     let mut stdout = stdout();
     enable_raw_mode()?;
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let res = run_game();
 
-    execute!(stdout, LeaveAlternateScreen)?;
+    execute!(stdout, DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
     res
@@ -73,6 +73,11 @@ fn main() -> Result<()>
 fn reveal(grid: &mut [[u32; h]; w], px: usize, py: usize) -> Result<bool>
 {
     if (grid[px][py] & UNKNOWN) == 0
+    {
+        return Ok(true);
+    }
+    
+    if (grid[px][py] & MARK) != 0
     {
         return Ok(true);
     }
@@ -205,6 +210,35 @@ fn run_game() -> Result<()>
                     _ => { }
                 }
             },
+            Event::Mouse(me) =>
+            {
+                let npx = (me.column / 2) as usize;
+                let npy = me.row as usize;
+                if npx >= w || npy >= h
+                {
+                    continue;
+                }
+                px = npx;
+                py = npy;
+                match me.kind
+                {
+                    MouseEventKind::Down(MouseButton::Left) =>
+                    {
+                        if !reveal(&mut grid, px, py)?
+                        {
+                            return Ok(());
+                        }
+                    },
+                    MouseEventKind::Down(MouseButton::Right) =>
+                    {
+                        if (grid[px][py] & UNKNOWN) != 0
+                        {
+                            grid[px][py] ^= MARK;
+                        }
+                    },
+                    _ => { }
+                }
+            }
             _ => { }
         }
     }
