@@ -75,73 +75,8 @@ fn main() -> Result<()>
     res
 }
 
-fn mark_cell(grid: &mut [[u32; h]; w], px: usize, py: usize) -> i32
+fn generate_grid(grid: &mut [[u32; h]; w], px: usize, py: usize, m: u32)
 {
-    if (grid[px][py] & UNKNOWN) != 0
-    {
-        grid[px][py] ^= MARK;
-        if (grid[px][py] & MARK) != 0
-        {
-            return 1;
-        }
-        else
-        {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-fn reveal(grid: &mut [[u32; h]; w], px: usize, py: usize) -> Result<bool>
-{
-    if (grid[px][py] & UNKNOWN) == 0
-    {
-        return Ok(true);
-    }
-    
-    if (grid[px][py] & MARK) != 0
-    {
-        return Ok(true);
-    }
-
-    grid[px][py] = grid[px][py] & !UNKNOWN & !MARK;
-    if (grid[px][py] & MINE) != 0
-    {
-        println!("YOU LOSE !");
-        read()?; // Wait for the user to press a key
-        return Ok(false)
-    }
-    if (grid[px][py] & NUMBER_MASK) == 0
-    {
-        // Propagate reveal
-        for nx in px.checked_sub(1).unwrap_or(0)..=px+1
-        {
-            for ny in py.checked_sub(1).unwrap_or(0)..=py+1
-            {
-                if nx < w && ny < h && (grid[nx][ny] & MINE) == 0
-                {
-                    reveal(grid, nx, ny)?;
-                }
-            }
-        }
-    }
-    return Ok(true)
-}
-
-fn run_game() -> Result<()>
-{
-    let m: u32 = 99;
-
-    enable_raw_mode()?;
-    let mut grid: [[u32; h]; w] = [[0; h]; w];
-    for x in 0..w
-    {
-        for y in 0..h
-        {
-            grid[x][y] = UNKNOWN;
-        }
-    }
-
     let mut rng = rand::thread_rng();
     for _mi in 0..m
     {
@@ -152,7 +87,8 @@ fn run_game() -> Result<()>
 
             x = rng.gen_range(0..w);
             y = rng.gen_range(0..h);
-            if (grid[x][y] & MINE) == 0
+            if (grid[x][y] & MINE) == 0 &&
+               ((x as isize - px as isize).abs() >  1 || (y as isize - py as isize).abs() >  1)
             {
                 break;
             }
@@ -180,6 +116,80 @@ fn run_game() -> Result<()>
             grid[x][y] |= n;
         }
     }
+}
+
+fn mark_cell(grid: &mut [[u32; h]; w], px: usize, py: usize) -> i32
+{
+    if (grid[px][py] & UNKNOWN) != 0
+    {
+        grid[px][py] ^= MARK;
+        if (grid[px][py] & MARK) != 0
+        {
+            return 1;
+        }
+        else
+        {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+fn reveal(grid: &mut [[u32; h]; w], px: usize, py: usize, m: u32, generated: bool) -> Result<bool>
+{
+    if !generated
+    {
+        generate_grid(grid, px, py, m);
+    }
+    if (grid[px][py] & UNKNOWN) == 0
+    {
+        return Ok(true);
+    }
+    
+    if (grid[px][py] & MARK) != 0
+    {
+        return Ok(true);
+    }
+
+    grid[px][py] = grid[px][py] & !UNKNOWN & !MARK;
+    if (grid[px][py] & MINE) != 0
+    {
+        println!("YOU LOSE !");
+        read()?; // Wait for the user to press a key
+        return Ok(false)
+    }
+    if (grid[px][py] & NUMBER_MASK) == 0
+    {
+        // Propagate reveal
+        for nx in px.checked_sub(1).unwrap_or(0)..=px+1
+        {
+            for ny in py.checked_sub(1).unwrap_or(0)..=py+1
+            {
+                if nx < w && ny < h && (grid[nx][ny] & MINE) == 0
+                {
+                    reveal(grid, nx, ny, m, true)?;
+                }
+            }
+        }
+    }
+    return Ok(true)
+}
+
+fn run_game() -> Result<()>
+{
+    let m: u32 = 99;
+
+    enable_raw_mode()?;
+    let mut grid: [[u32; h]; w] = [[0; h]; w];
+    for x in 0..w
+    {
+        for y in 0..h
+        {
+            grid[x][y] = UNKNOWN;
+        }
+    }
+
+    let mut generated = false;
     
     let mut px = w / 2;
     let mut py = h / 2;
@@ -220,10 +230,11 @@ fn run_game() -> Result<()>
                     KeyCode::Left => px = px.checked_sub(1).unwrap_or(0),
                     KeyCode::Char(' ' | 's') =>
                     {
-                        if !reveal(&mut grid, px, py)?
+                        if !reveal(&mut grid, px, py, m, generated)?
                         {
                             return Ok(());
                         }
+                        generated = true;
                     },
                     KeyCode::Char('!' | 'z') =>
                     {
@@ -246,10 +257,11 @@ fn run_game() -> Result<()>
                 {
                     MouseEventKind::Down(MouseButton::Left) =>
                     {
-                        if !reveal(&mut grid, px, py)?
+                        if !reveal(&mut grid, px, py, m, generated)?
                         {
                             return Ok(());
                         }
+                        generated = true;
                     },
                     MouseEventKind::Down(MouseButton::Right) =>
                     {
