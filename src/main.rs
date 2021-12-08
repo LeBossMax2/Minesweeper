@@ -6,16 +6,13 @@ use crossterm::cursor::{MoveTo, Show, Hide};
 use crossterm::style::{SetForegroundColor, Color, SetBackgroundColor};
 use crossterm::{Result, execute, queue};
 
-const w: usize = 30;
-const h: usize = 16;
-
 fn main() -> Result<()>
 {
     let mut stdout = stdout();
     enable_raw_mode()?;
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
 
-    let res = Minesweeper::new().run_game();
+    let res = Minesweeper::<30, 16>::new().run_game();
 
     if let Ok(false) = res
     {
@@ -116,9 +113,9 @@ impl Cell
     }
 }
 
-pub struct Minesweeper
+pub struct Minesweeper<const WIDTH: usize, const HEIGHT: usize>
 {
-    grid: [[Cell; h]; w],
+    grid: [[Cell; HEIGHT]; WIDTH],
     generated: bool,
     mine_count: u32,
     flag_count: u32,
@@ -126,27 +123,27 @@ pub struct Minesweeper
     py: usize
 }
 
-impl Minesweeper
+impl<const W: usize, const H: usize> Minesweeper<W, H>
 {
     pub fn new() -> Self
     {
         Self
         {
-            grid: [[Cell::EMPTY; h]; w],
+            grid: [[Cell::EMPTY; H]; W],
             generated: false,
             mine_count: 99,
             flag_count: 0,
-            px: w / 2,
-            py: h / 2
+            px: W / 2,
+            py: H / 2
         }
     }
 
     fn print_grid(&self, output: &mut impl Write) -> Result<()>
     {
-        for y in 0..h
+        for y in 0..H
         {
             queue!(output, MoveTo(0, y as u16))?;
-            for x in 0..w
+            for x in 0..W
             {
                 if x == self.px && y == self.py
                 {
@@ -159,7 +156,7 @@ impl Minesweeper
                 write!(output, " ")?;
             }
         }
-        queue!(output, MoveTo(0, h as u16))?;
+        queue!(output, MoveTo(0, H as u16))?;
         write!(output, "{}   ", self.mine_count as i32 - self.flag_count as i32)?;
         output.flush()?;
         Ok(())
@@ -172,7 +169,7 @@ impl Minesweeper
         {
             for ny in y.checked_sub(1).unwrap_or(0)..=y+1
             {
-                if nx < w && ny < h && pred(self.grid[nx][ny])
+                if nx < W && ny < H && pred(self.grid[nx][ny])
                 {
                     n += 1;
                 }
@@ -190,8 +187,8 @@ impl Minesweeper
             let mut y;
             loop
             {
-                x = rng.gen_range(0..w);
-                y = rng.gen_range(0..h);
+                x = rng.gen_range(0..W);
+                y = rng.gen_range(0..H);
                 if self.grid[x][y].content != CellContent::Mine &&
                 ((x as isize - self.px as isize).abs() >  1 || (y as isize - self.py as isize).abs() >  1)
                 {
@@ -202,9 +199,9 @@ impl Minesweeper
             self.grid[x][y].content = CellContent::Mine;
         }
         
-        for x in 0..w
+        for x in 0..W
         {
-            for y in 0..h
+            for y in 0..H
             {
                 if self.grid[x][y].content != CellContent::Mine
                 {
@@ -249,7 +246,7 @@ impl Minesweeper
             {
                 for ny in y.checked_sub(1).unwrap_or(0)..=y+1
                 {
-                    if nx < w && ny < h && !self.grid[nx][ny].state.is_flagged()
+                    if nx < W && ny < H && !self.grid[nx][ny].state.is_flagged()
                     {
                         res &= self.reveal(nx, ny)?
                     }
@@ -288,7 +285,7 @@ impl Minesweeper
                     {
                         for ny in y.checked_sub(1).unwrap_or(0)..=y+1
                         {
-                            if nx < w && ny < h
+                            if nx < W && ny < H
                             {
                                 self.reveal(nx, ny)?;
                             }
@@ -310,24 +307,8 @@ impl Minesweeper
                 {
                     KeyCode::Char('q') => vec![InputAction::Quit],
                     KeyCode::Up => vec![InputAction::Move(self.px, self.py.checked_sub(1).unwrap_or(0))],
-                    KeyCode::Down =>
-                    {
-                        let mut py = self.py + 1;
-                        if py >= h
-                        {
-                            py = h - 1;
-                        }
-                        vec![InputAction::Move(self.px, py)]
-                    },
-                    KeyCode::Right =>
-                    {
-                        let mut px = self.px + 1;
-                        if px >= w
-                        {
-                            px = w - 1;
-                        }
-                        vec![InputAction::Move(px, self.py)]
-                    },
+                    KeyCode::Down => vec![InputAction::Move(self.px, self.py + 1)],
+                    KeyCode::Right => vec![InputAction::Move(self.px + 1, self.py)],
                     KeyCode::Left => vec![InputAction::Move(self.px.checked_sub(1).unwrap_or(0), self.py)],
                     KeyCode::Char(' ' | 's') => vec![InputAction::Reveal],
                     KeyCode::Char('!' | 'z') => vec![InputAction::Flag],
@@ -339,7 +320,7 @@ impl Minesweeper
             {
                 let npx = (me.column / 2) as usize;
                 let npy = me.row as usize;
-                if npx >= w || npy >= h || me.column % 2 != 0
+                if npx >= W || npy >= H || me.column % 2 != 0
                 {
                     return vec![];
                 }
@@ -369,8 +350,10 @@ impl Minesweeper
             {
                 match action
                 {
-                    InputAction::Move(x, y) =>
+                    InputAction::Move(mut x, mut y) =>
                     {
+                        if x >= W { x = W - 1; }
+                        if y >= H { y = H - 1; }
                         self.px = x;
                         self.py = y;
                     },
