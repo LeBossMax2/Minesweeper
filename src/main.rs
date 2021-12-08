@@ -6,11 +6,6 @@ use crossterm::cursor::{MoveTo, Show, Hide};
 use crossterm::style::{SetForegroundColor, Color, SetBackgroundColor};
 use crossterm::{Result, execute, queue};
 
-const MINE: u32 = 16;
-const UNKNOWN: u32 = MINE << 1;
-const MARKER: u32 = UNKNOWN << 1;
-const NUMBER_MASK: u32 = MINE-1;
-
 const w: usize = 30;
 const h: usize = 16;
 
@@ -34,24 +29,64 @@ fn main() -> Result<()>
     res.map(|_|())
 }
 
-struct Minesweeper
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum CellState
 {
-    grid: [[u32; h]; w],
+    Uncovered,
+    Covered,
+    Flagged
+}
+
+impl CellState
+{
+    pub fn is_covered(self) -> bool
+    {
+        self != Self::Uncovered
+    }
+
+    pub fn is_flagged(self) -> bool
+    {
+        self == Self::Flagged
+    }
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum CellContent
+{
+    Mine,
+    Number(u8)
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub struct Cell
+{
+    content: CellContent,
+    state: CellState
+}
+
+impl Cell
+{
+    pub const EMPTY: Self = Cell { content: CellContent::Number(0), state: CellState::Covered };
+}
+
+pub struct Minesweeper
+{
+    grid: [[Cell; h]; w],
     generated: bool,
     px: usize,
     py: usize,
     mine_count: u32,
-    flag_count: i32
+    flag_count: u32
 }
 
 impl Minesweeper
 {
-    fn new() -> Self
+    pub fn new() -> Self
     {
         Self
         {
             mine_count: 99,
-            grid: [[UNKNOWN; h]; w],
+            grid: [[Cell::EMPTY; h]; w],
 
             generated: false,
             px: w / 2,
@@ -73,48 +108,57 @@ impl Minesweeper
                     queue!(stdout, SetBackgroundColor(Color::DarkGrey))?;
                 }
 
-                if (self.grid[x][y] & UNKNOWN) != 0
+                match self.grid[x][y].state
                 {
-                    if (self.grid[x][y] & MARKER) != 0
+                    CellState::Flagged =>
                     {
                         queue!(stdout, SetForegroundColor(Color::Red))?;
                         print!("P");
-                    }
-                    else
+                    },
+                    CellState::Covered =>
                     {
                         queue!(stdout, SetForegroundColor(Color::Reset))?;
                         print!("■");
+                    },
+                    CellState::Uncovered =>
+                    {
+                        match self.grid[x][y].content
+                        {
+                            CellContent::Mine =>
+                            {
+                                queue!(stdout, SetForegroundColor(Color::Red))?;
+                                print!("*");
+                            },
+                            CellContent::Number(0) =>
+                            {
+                                print!(" ");
+                            },
+                            CellContent::Number(nb) =>
+                            {
+                                queue!(stdout, SetForegroundColor(Color::Cyan))?;
+                                print!("{}", nb);
+                            }
+                        }
                     }
-                }
-                else if (self.grid[x][y] & MINE) != 0
-                {
-                    queue!(stdout, SetForegroundColor(Color::Red))?;
-                    print!("*");
-                }
-                else if (self.grid[x][y] & NUMBER_MASK) == 0
-                {
-                    print!(" ");
-                }
-                else
-                {
-                    queue!(stdout, SetForegroundColor(Color::Cyan))?;
-                    print!("{}", self.grid[x][y] & NUMBER_MASK);
                 }
                 queue!(stdout, SetBackgroundColor(Color::Reset))?;
                 print!(" ");
             }
         }
+        queue!(stdout, MoveTo(0, h as u16))?;
+        print!("{}   ", self.mine_count as i32 - self.flag_count as i32);
+        stdout.flush()?;
         Ok(())
     }
 
-    fn count_neighbors(&self, x: usize, y: usize, mask: u32) -> u32
+    fn count_neighbors(&self, x: usize, y: usize, pred: impl Fn(Cell) -> bool) -> u8
     {
         let mut n = 0;
         for nx in x.checked_sub(1).unwrap_or(0)..=x+1
         {
             for ny in y.checked_sub(1).unwrap_or(0)..=y+1
             {
-                if nx < w && ny < h && (self.grid[nx][ny] & mask) > 0
+                if nx < w && ny < h && pred(self.grid[nx][ny])
                 {
                     n += 1;
                 }
@@ -134,113 +178,122 @@ impl Minesweeper
             {
                 x = rng.gen_range(0..w);
                 y = rng.gen_range(0..h);
-                if (self.grid[x][y] & MINE) == 0 &&
+                if self.grid[x][y].content != CellContent::Mine &&
                 ((x as isize - self.px as isize).abs() >  1 || (y as isize - self.py as isize).abs() >  1)
                 {
                     break;
                 }
             }
 
-            self.grid[x][y] = MINE | UNKNOWN;
+            self.grid[x][y].content = CellContent::Mine;
         }
         
         for x in 0..w
         {
             for y in 0..h
             {
-                let n = self.count_neighbors(x, y, MINE);
-                self.grid[x][y] |= n;
+                if self.grid[x][y].content != CellContent::Mine
+                {
+                    let n = self.count_neighbors(x, y, |c| c.content == CellContent::Mine);
+                    self.grid[x][y].content = CellContent::Number(n);
+                }
             }
         }
         self.generated = true;
     }
 
-    fn mark_cell(&mut self, px: usize, py: usize)
+    fn mark_cell(&mut self, x: usize, y: usize)
     {
-        if (self.grid[px][py] & UNKNOWN) != 0
+        match self.grid[x][y].state
         {
-            self.grid[px][py] ^= MARKER;
-            if (self.grid[px][py] & MARKER) != 0
+            CellState::Covered =>
             {
+                self.grid[x][y].state = CellState::Flagged;
                 self.flag_count += 1;
-            }
-            else
+            },
+            CellState::Flagged =>
             {
+                self.grid[x][y].state = CellState::Covered;
                 self.flag_count -= 1;
-            }
+            },
+            CellState::Uncovered => { }
         }
     }
 
     fn reveal_area(&mut self, x: usize, y: usize) -> Result<bool>
     {
-        let markers = self.count_neighbors(x, y, MARKER);
-        let nb = self.grid[x][y] & NUMBER_MASK;
-        if nb == markers
+        if let (CellState::Uncovered, CellContent::Number(nb)) = (self.grid[x][y].state, self.grid[x][y].content )
         {
-            let mut res = true;
-            for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+            let flags = self.count_neighbors(x, y, |c| c.state.is_flagged());
+            if nb == flags
             {
-                for ny in y.checked_sub(1).unwrap_or(0)..=y+1
+                let mut res = true;
+                for nx in x.checked_sub(1).unwrap_or(0)..=x+1
                 {
-                    if nx < w && ny < h && (self.grid[nx][ny] & MARKER) == 0
+                    for ny in y.checked_sub(1).unwrap_or(0)..=y+1
                     {
-                        res &= self.reveal(nx, ny)?
+                        if nx < w && ny < h && !self.grid[nx][ny].state.is_flagged()
+                        {
+                            res &= self.reveal(nx, ny)?
+                        }
                     }
                 }
+                return Ok(res)
             }
-            return Ok(res)
         }
         return Ok(true)
     }
 
-    fn reveal(&mut self, px: usize, py: usize) -> Result<bool>
+    fn reveal(&mut self, x: usize, y: usize) -> Result<bool>
     {
         if !self.generated
         {
             self.generate_grid();
         }
 
-        if (self.grid[px][py] & UNKNOWN) == 0
+        match self.grid[x][y].state
         {
-            return Ok(true);
-        }
-        
-        if (self.grid[px][py] & MARKER) != 0
-        {
-            return Ok(true);
-        }
-
-        self.grid[px][py] = self.grid[px][py] & !UNKNOWN & !MARKER;
-        if (self.grid[px][py] & MINE) != 0
-        {
-            return Ok(false)
-        }
-        if (self.grid[px][py] & NUMBER_MASK) == 0
-        {
-            // Propagate reveal
-            for nx in px.checked_sub(1).unwrap_or(0)..=px+1
+            CellState::Uncovered | CellState::Flagged =>
             {
-                for ny in py.checked_sub(1).unwrap_or(0)..=py+1
+                Ok(true)
+            },
+            CellState::Covered =>
+            {
+                self.grid[x][y].state = CellState::Uncovered;
+                match self.grid[x][y].content
                 {
-                    if nx < w && ny < h
+                    CellContent::Mine =>
                     {
-                        self.reveal(nx, ny)?;
+                        Ok(false)
+                    },
+                    CellContent::Number(nb) =>
+                    {
+                        if nb == 0
+                        {
+                            // Propagate reveal
+                            for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+                            {
+                                for ny in y.checked_sub(1).unwrap_or(0)..=y+1
+                                {
+                                    if nx < w && ny < h
+                                    {
+                                        self.reveal(nx, ny)?;
+                                    }
+                                }
+                            }
+                        }
+                        Ok(true)
                     }
                 }
             }
         }
-        return Ok(true)
     }
 
-    fn run_game(mut self) -> Result<bool>
+    pub fn run_game(mut self) -> Result<bool>
     {
         loop
         {
-            let mut stdout = stdout();
             self.print_grid()?;
-            queue!(stdout, MoveTo(0, h as u16))?;
-            print!("{}   ", self.mine_count as i32 - self.flag_count);
-            stdout.flush()?;
             
             match read()?
             {
