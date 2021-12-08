@@ -8,7 +8,7 @@ use crossterm::{Result, execute, queue};
 
 const MINE: u32 = 16;
 const UNKNOWN: u32 = MINE << 1;
-const MARK: u32 = UNKNOWN << 1;
+const MARKER: u32 = UNKNOWN << 1;
 const NUMBER_MASK: u32 = MINE-1;
 
 const w: usize = 30;
@@ -22,10 +22,16 @@ fn main() -> Result<()>
 
     let res = Minesweeper::new().run_game();
 
+    if let Ok(false) = res
+    {
+        println!("YOU LOSE !");
+        read()?; // Wait for the user to press a key
+    }
+
     execute!(stdout, Show, DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
-    res
+    res.map(|_|())
 }
 
 struct Minesweeper
@@ -69,7 +75,7 @@ impl Minesweeper
 
                 if (self.grid[x][y] & UNKNOWN) != 0
                 {
-                    if (self.grid[x][y] & MARK) != 0
+                    if (self.grid[x][y] & MARKER) != 0
                     {
                         queue!(stdout, SetForegroundColor(Color::Red))?;
                         print!("P");
@@ -101,6 +107,22 @@ impl Minesweeper
         Ok(())
     }
 
+    fn count_neighbors(&self, x: usize, y: usize, mask: u32) -> u32
+    {
+        let mut n = 0;
+        for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+        {
+            for ny in y.checked_sub(1).unwrap_or(0)..=y+1
+            {
+                if nx < w && ny < h && (self.grid[nx][ny] & mask) > 0
+                {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
     fn generate_grid(&mut self)
     {
         let mut rng = rand::thread_rng();
@@ -110,7 +132,6 @@ impl Minesweeper
             let mut y;
             loop
             {
-
                 x = rng.gen_range(0..w);
                 y = rng.gen_range(0..h);
                 if (self.grid[x][y] & MINE) == 0 &&
@@ -127,39 +148,49 @@ impl Minesweeper
         {
             for y in 0..h
             {
-                let mut n = 0;
-                for nx in x.checked_sub(1).unwrap_or(0)..=x+1
-                {
-                    for ny in y.checked_sub(1).unwrap_or(0)..=y+1
-                    {
-                        if nx < w
-                        && ny < h && (self.grid[nx][ny] & MINE) > 0
-                        {
-                            n += 1;
-                        }
-                    }
-                }
+                let n = self.count_neighbors(x, y, MINE);
                 self.grid[x][y] |= n;
             }
         }
         self.generated = true;
     }
 
-    fn mark_cell(&mut self, px: usize, py: usize) -> i32
+    fn mark_cell(&mut self, px: usize, py: usize)
     {
         if (self.grid[px][py] & UNKNOWN) != 0
         {
-            self.grid[px][py] ^= MARK;
-            if (self.grid[px][py] & MARK) != 0
+            self.grid[px][py] ^= MARKER;
+            if (self.grid[px][py] & MARKER) != 0
             {
-                return 1;
+                self.flag_count += 1;
             }
             else
             {
-                return -1;
+                self.flag_count -= 1;
             }
         }
-        return 0;
+    }
+
+    fn reveal_area(&mut self, x: usize, y: usize) -> Result<bool>
+    {
+        let markers = self.count_neighbors(x, y, MARKER);
+        let nb = self.grid[x][y] & NUMBER_MASK;
+        if nb == markers
+        {
+            let mut res = true;
+            for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+            {
+                for ny in y.checked_sub(1).unwrap_or(0)..=y+1
+                {
+                    if nx < w && ny < h && (self.grid[nx][ny] & MARKER) == 0
+                    {
+                        res &= self.reveal(nx, ny)?
+                    }
+                }
+            }
+            return Ok(res)
+        }
+        return Ok(true)
     }
 
     fn reveal(&mut self, px: usize, py: usize) -> Result<bool>
@@ -174,16 +205,14 @@ impl Minesweeper
             return Ok(true);
         }
         
-        if (self.grid[px][py] & MARK) != 0
+        if (self.grid[px][py] & MARKER) != 0
         {
             return Ok(true);
         }
 
-        self.grid[px][py] = self.grid[px][py] & !UNKNOWN & !MARK;
+        self.grid[px][py] = self.grid[px][py] & !UNKNOWN & !MARKER;
         if (self.grid[px][py] & MINE) != 0
         {
-            println!("YOU LOSE !");
-            read()?; // Wait for the user to press a key
             return Ok(false)
         }
         if (self.grid[px][py] & NUMBER_MASK) == 0
@@ -193,7 +222,7 @@ impl Minesweeper
             {
                 for ny in py.checked_sub(1).unwrap_or(0)..=py+1
                 {
-                    if nx < w && ny < h && (self.grid[nx][ny] & MINE) == 0
+                    if nx < w && ny < h
                     {
                         self.reveal(nx, ny)?;
                     }
@@ -203,7 +232,7 @@ impl Minesweeper
         return Ok(true)
     }
 
-    fn run_game(mut self) -> Result<()>
+    fn run_game(mut self) -> Result<bool>
     {
         loop
         {
@@ -219,7 +248,7 @@ impl Minesweeper
                 {
                     match ke.code
                     {
-                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('q') => return Ok(true),
                         KeyCode::Up => self.py = self.py.checked_sub(1).unwrap_or(0),
                         KeyCode::Down =>
                         {
@@ -242,12 +271,19 @@ impl Minesweeper
                         {
                             if !self.reveal(self.px, self.py)?
                             {
-                                return Ok(());
+                                return Ok(false);
                             }
                         },
                         KeyCode::Char('!' | 'z') =>
                         {
-                            self.flag_count += self.mark_cell(self.px, self.py);
+                            self.mark_cell(self.px, self.py);
+                        },
+                        KeyCode::Char('d') =>
+                        {
+                            if !self.reveal_area(self.px, self.py)?
+                            {
+                                return Ok(false);
+                            }
                         }
                         _ => { }
                     }
@@ -268,12 +304,19 @@ impl Minesweeper
                         {
                             if !self.reveal(self.px, self.py)?
                             {
-                                return Ok(());
+                                return Ok(false);
                             }
                         },
                         MouseEventKind::Down(MouseButton::Right) =>
                         {
-                            self.flag_count += self.mark_cell(self.px, self.py);
+                            self.mark_cell(self.px, self.py);
+                        },
+                        MouseEventKind::Down(MouseButton::Middle) =>
+                        {
+                            if !self.reveal_area(self.px, self.py)?
+                            {
+                                return Ok(false);
+                            }
                         },
                         _ => { }
                     }
