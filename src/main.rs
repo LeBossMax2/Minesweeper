@@ -29,6 +29,15 @@ fn main() -> Result<()>
     res.map(|_|())
 }
 
+pub enum InputAction
+{
+    Move(usize, usize),
+    Flag,
+    Reveal,
+    RevealArea,
+    Quit
+}
+
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub enum CellState
 {
@@ -67,16 +76,54 @@ pub struct Cell
 impl Cell
 {
     pub const EMPTY: Self = Cell { content: CellContent::Number(0), state: CellState::Covered };
+    
+    fn print_cell(self, output: &mut impl Write) -> Result<()>
+    {
+        match self.state
+        {
+            CellState::Flagged =>
+            {
+                queue!(output, SetForegroundColor(Color::Red))?;
+                write!(output, "P")?;
+            },
+            CellState::Covered =>
+            {
+                queue!(output, SetForegroundColor(Color::Reset))?;
+                write!(output, "■")?;
+            },
+            CellState::Uncovered =>
+            {
+                match self.content
+                {
+                    CellContent::Mine =>
+                    {
+                        queue!(output, SetForegroundColor(Color::Red))?;
+                        write!(output, "*")?;
+                    },
+                    CellContent::Number(0) =>
+                    {
+                        write!(output, " ")?;
+                    },
+                    CellContent::Number(nb) =>
+                    {
+                        queue!(output, SetForegroundColor(Color::Cyan))?;
+                        write!(output, "{}", nb)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct Minesweeper
 {
     grid: [[Cell; h]; w],
     generated: bool,
-    px: usize,
-    py: usize,
     mine_count: u32,
-    flag_count: u32
+    flag_count: u32,
+    px: usize,
+    py: usize
 }
 
 impl Minesweeper
@@ -85,69 +132,36 @@ impl Minesweeper
     {
         Self
         {
-            mine_count: 99,
             grid: [[Cell::EMPTY; h]; w],
-
             generated: false,
+            mine_count: 99,
+            flag_count: 0,
             px: w / 2,
-            py: h / 2,
-            flag_count: 0
+            py: h / 2
         }
     }
 
-    fn print_grid(&self) -> Result<()>
+    fn print_grid(&self, output: &mut impl Write) -> Result<()>
     {
-        let mut stdout = stdout();
         for y in 0..h
         {
-            queue!(stdout, MoveTo(0, y as u16))?;
+            queue!(output, MoveTo(0, y as u16))?;
             for x in 0..w
             {
                 if x == self.px && y == self.py
                 {
-                    queue!(stdout, SetBackgroundColor(Color::DarkGrey))?;
+                    queue!(output, SetBackgroundColor(Color::DarkGrey))?;
                 }
 
-                match self.grid[x][y].state
-                {
-                    CellState::Flagged =>
-                    {
-                        queue!(stdout, SetForegroundColor(Color::Red))?;
-                        print!("P");
-                    },
-                    CellState::Covered =>
-                    {
-                        queue!(stdout, SetForegroundColor(Color::Reset))?;
-                        print!("■");
-                    },
-                    CellState::Uncovered =>
-                    {
-                        match self.grid[x][y].content
-                        {
-                            CellContent::Mine =>
-                            {
-                                queue!(stdout, SetForegroundColor(Color::Red))?;
-                                print!("*");
-                            },
-                            CellContent::Number(0) =>
-                            {
-                                print!(" ");
-                            },
-                            CellContent::Number(nb) =>
-                            {
-                                queue!(stdout, SetForegroundColor(Color::Cyan))?;
-                                print!("{}", nb);
-                            }
-                        }
-                    }
-                }
-                queue!(stdout, SetBackgroundColor(Color::Reset))?;
-                print!(" ");
+                self.grid[x][y].print_cell(output)?;
+                
+                queue!(output, SetBackgroundColor(Color::Reset))?;
+                write!(output, " ")?;
             }
         }
-        queue!(stdout, MoveTo(0, h as u16))?;
-        print!("{}   ", self.mine_count as i32 - self.flag_count as i32);
-        stdout.flush()?;
+        queue!(output, MoveTo(0, h as u16))?;
+        write!(output, "{}   ", self.mine_count as i32 - self.flag_count as i32)?;
+        output.flush()?;
         Ok(())
     }
 
@@ -222,24 +236,26 @@ impl Minesweeper
 
     fn reveal_area(&mut self, x: usize, y: usize) -> Result<bool>
     {
-        if let (CellState::Uncovered, CellContent::Number(nb)) = (self.grid[x][y].state, self.grid[x][y].content )
+        if let (CellState::Uncovered, CellContent::Number(nb)) = (self.grid[x][y].state, self.grid[x][y].content)
         {
             let flags = self.count_neighbors(x, y, |c| c.state.is_flagged());
-            if nb == flags
+            if nb != flags
             {
-                let mut res = true;
-                for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+                return Ok(true)
+            }
+            
+            let mut res = true;
+            for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+            {
+                for ny in y.checked_sub(1).unwrap_or(0)..=y+1
                 {
-                    for ny in y.checked_sub(1).unwrap_or(0)..=y+1
+                    if nx < w && ny < h && !self.grid[nx][ny].state.is_flagged()
                     {
-                        if nx < w && ny < h && !self.grid[nx][ny].state.is_flagged()
-                        {
-                            res &= self.reveal(nx, ny)?
-                        }
+                        res &= self.reveal(nx, ny)?
                     }
                 }
-                return Ok(res)
             }
+            return Ok(res)
         }
         return Ok(true)
     }
@@ -251,130 +267,136 @@ impl Minesweeper
             self.generate_grid();
         }
 
-        match self.grid[x][y].state
+        if self.grid[x][y].state != CellState::Covered
         {
-            CellState::Uncovered | CellState::Flagged =>
+            return Ok(true);
+        }
+
+        self.grid[x][y].state = CellState::Uncovered;
+        match self.grid[x][y].content
+        {
+            CellContent::Mine =>
             {
-                Ok(true)
+                Ok(false)
             },
-            CellState::Covered =>
+            CellContent::Number(nb) =>
             {
-                self.grid[x][y].state = CellState::Uncovered;
-                match self.grid[x][y].content
+                if nb == 0
                 {
-                    CellContent::Mine =>
+                    // Propagate reveal
+                    for nx in x.checked_sub(1).unwrap_or(0)..=x+1
                     {
-                        Ok(false)
-                    },
-                    CellContent::Number(nb) =>
-                    {
-                        if nb == 0
+                        for ny in y.checked_sub(1).unwrap_or(0)..=y+1
                         {
-                            // Propagate reveal
-                            for nx in x.checked_sub(1).unwrap_or(0)..=x+1
+                            if nx < w && ny < h
                             {
-                                for ny in y.checked_sub(1).unwrap_or(0)..=y+1
-                                {
-                                    if nx < w && ny < h
-                                    {
-                                        self.reveal(nx, ny)?;
-                                    }
-                                }
+                                self.reveal(nx, ny)?;
                             }
                         }
-                        Ok(true)
                     }
                 }
+                Ok(true)
             }
+        }
+    }
+
+    fn read_input(&self, event: Event) -> Vec<InputAction>
+    {
+        match event
+        {
+            Event::Key(ke) =>
+            {
+                match ke.code
+                {
+                    KeyCode::Char('q') => vec![InputAction::Quit],
+                    KeyCode::Up => vec![InputAction::Move(self.px, self.py.checked_sub(1).unwrap_or(0))],
+                    KeyCode::Down =>
+                    {
+                        let mut py = self.py + 1;
+                        if py >= h
+                        {
+                            py = h - 1;
+                        }
+                        vec![InputAction::Move(self.px, py)]
+                    },
+                    KeyCode::Right =>
+                    {
+                        let mut px = self.px + 1;
+                        if px >= w
+                        {
+                            px = w - 1;
+                        }
+                        vec![InputAction::Move(px, self.py)]
+                    },
+                    KeyCode::Left => vec![InputAction::Move(self.px.checked_sub(1).unwrap_or(0), self.py)],
+                    KeyCode::Char(' ' | 's') => vec![InputAction::Reveal],
+                    KeyCode::Char('!' | 'z') => vec![InputAction::Flag],
+                    KeyCode::Char('d') => vec![InputAction::RevealArea],
+                    _ => vec![]
+                }
+            },
+            Event::Mouse(me) =>
+            {
+                let npx = (me.column / 2) as usize;
+                let npy = me.row as usize;
+                if npx >= w || npy >= h || me.column % 2 != 0
+                {
+                    return vec![];
+                }
+                let mut actions = vec![InputAction::Move(npx, npy)];
+                match me.kind
+                {
+                    MouseEventKind::Down(MouseButton::Left) => actions.push(InputAction::Reveal),
+                    MouseEventKind::Down(MouseButton::Right) => actions.push(InputAction::Flag),
+                    MouseEventKind::Down(MouseButton::Middle) => actions.push(InputAction::RevealArea),
+                    _ => { }
+                }
+                actions
+            }
+            _ => vec![]
         }
     }
 
     pub fn run_game(mut self) -> Result<bool>
     {
+        let mut stdout = stdout();
         loop
         {
-            self.print_grid()?;
+            self.print_grid(&mut stdout)?;
             
-            match read()?
+            let actions = self.read_input(read()?);
+            for action in actions
             {
-                Event::Key(ke) =>
+                match action
                 {
-                    match ke.code
+                    InputAction::Move(x, y) =>
                     {
-                        KeyCode::Char('q') => return Ok(true),
-                        KeyCode::Up => self.py = self.py.checked_sub(1).unwrap_or(0),
-                        KeyCode::Down =>
+                        self.px = x;
+                        self.py = y;
+                    },
+                    InputAction::Reveal =>
+                    {
+                        if !self.reveal(self.px, self.py)?
                         {
-                            self.py += 1;
-                            if self.py >= h
-                            {
-                                self.py = h - 1;
-                            }
-                        },
-                        KeyCode::Right =>
-                        {
-                            self.px += 1;
-                            if self.px >= w
-                            {
-                                self.px = w - 1;
-                            }
-                        },
-                        KeyCode::Left => self.px = self.px.checked_sub(1).unwrap_or(0),
-                        KeyCode::Char(' ' | 's') =>
-                        {
-                            if !self.reveal(self.px, self.py)?
-                            {
-                                return Ok(false);
-                            }
-                        },
-                        KeyCode::Char('!' | 'z') =>
-                        {
-                            self.mark_cell(self.px, self.py);
-                        },
-                        KeyCode::Char('d') =>
-                        {
-                            if !self.reveal_area(self.px, self.py)?
-                            {
-                                return Ok(false);
-                            }
+                            return Ok(false);
                         }
-                        _ => { }
-                    }
-                },
-                Event::Mouse(me) =>
-                {
-                    let npx = (me.column / 2) as usize;
-                    let npy = me.row as usize;
-                    if npx >= w || npy >= h
+                    },
+                    InputAction::RevealArea =>
                     {
-                        continue;
-                    }
-                    self.px = npx;
-                    self.py = npy;
-                    match me.kind
+                        if !self.reveal_area(self.px, self.py)?
+                        {
+                            return Ok(false);
+                        }
+                    },
+                    InputAction::Flag =>
                     {
-                        MouseEventKind::Down(MouseButton::Left) =>
-                        {
-                            if !self.reveal(self.px, self.py)?
-                            {
-                                return Ok(false);
-                            }
-                        },
-                        MouseEventKind::Down(MouseButton::Right) =>
-                        {
-                            self.mark_cell(self.px, self.py);
-                        },
-                        MouseEventKind::Down(MouseButton::Middle) =>
-                        {
-                            if !self.reveal_area(self.px, self.py)?
-                            {
-                                return Ok(false);
-                            }
-                        },
-                        _ => { }
+                        self.mark_cell(self.px, self.py);
+                    },
+                    InputAction::Quit =>
+                    {
+                        return Ok(true);
                     }
                 }
-                _ => { }
             }
         }
     }
